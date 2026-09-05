@@ -113,27 +113,36 @@ don't expose raw port 25 to the internet.
    (e.g. `mail.yourdomain.com`) at the instance's Elastic IP now, so it's
    already resolving by the time Caddy tries to get a certificate for it.
 
-6. SSH in, clone the repo, read `deploy/setup-ec2.sh` (it's short — know what
-   you're about to run as root), then run it — add `CADDY_DOMAIN=...` if you
-   did step 5, omit it to skip TLS setup for now:
+6. SSH in and run `install.sh` as root. It's interactive — run it bare and
+   it asks for anything it needs:
+
+   ```bash
+   sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/you/bounce-and-forward/main/install.sh)"
+   ```
+
+   It'll prompt for your repo URL, then a domain for TLS via Caddy (leave
+   blank to skip that — see "TLS for the web UI" below), show a summary, and
+   wait for you to press Enter before touching the system. Prefer to review
+   it first, or automate it (CI, no prompts)? Same script, no prompting when
+   the values are already given as env vars:
 
    ```bash
    git clone https://github.com/you/bounce-and-forward.git /tmp/baf-setup
-   less /tmp/baf-setup/deploy/setup-ec2.sh
+   less /tmp/baf-setup/install.sh
    sudo REPO_URL=https://github.com/you/bounce-and-forward.git \
      CADDY_DOMAIN=mail.yourdomain.com \
-     bash /tmp/baf-setup/deploy/setup-ec2.sh
+     bash /tmp/baf-setup/install.sh
    ```
 
-   This installs Node.js, creates a `bounceforward` service user, clones the
-   repo to `/opt/bounce-and-forward`, installs dependencies, and installs the
-   systemd unit — but does **not** start the service yet. (`setup-ec2.sh`
-   itself pipes NodeSource's official install script through `bash` to add
-   the Node.js apt repository — the standard way to install it, but still
-   worth knowing it's root-executing a remote script; review
+   Either way it installs Node.js, creates a `bounceforward` service user,
+   clones the repo to `/opt/bounce-and-forward`, installs dependencies, and
+   installs the systemd unit — but does **not** start the service yet.
+   (`install.sh` itself pipes NodeSource's official install script through
+   `bash` to add the Node.js apt repository — the standard way to install
+   it, but still worth knowing it's root-executing a remote script; review
    https://github.com/nodesource/distributions if you want to avoid that. It
-   does the same thing for Caddy's official apt repository if `CADDY_DOMAIN`
-   is set — review https://caddyserver.com/docs/install if you want to avoid
+   does the same thing for Caddy's official apt repository if you gave it a
+   domain — review https://caddyserver.com/docs/install if you want to avoid
    that too.)
 
 7. Fill in `/opt/bounce-and-forward/.env` (set `SMTP_PORT=25`,
@@ -158,18 +167,18 @@ bind port 25 without running as root.
 
 By default the app serves the web UI as plain HTTP on `127.0.0.1:WEB_PORT` —
 fine if you're only reaching it over SSH tunnel/VPN, not fine if you're
-putting a login form on the open internet. `setup-ec2.sh` can set up
+putting a login form on the open internet. `install.sh` can set up
 [Caddy](https://caddyserver.com) as a reverse proxy in front of it, which
 gets you automatic Let's Encrypt certificate issuance and renewal for free
 (no `certbot`, no manual renewal cron, no code changes to the app).
 
 How it fits together: Caddy binds the public IP on 80/443, terminates TLS,
 and reverse-proxies plaintext to the app over `127.0.0.1:WEB_PORT`, which
-never needs to be reachable from outside the box at all. Pass
-`CADDY_DOMAIN=mail.yourdomain.com` to `setup-ec2.sh` (step 6 above) and it
-installs Caddy from its official apt repo, writes `/etc/caddy/Caddyfile`
-from [`deploy/Caddyfile`](deploy/Caddyfile) with your domain substituted in,
-and starts it — the Caddyfile itself is just:
+never needs to be reachable from outside the box at all. Give `install.sh` a
+domain (step 6 above, prompted or via `CADDY_DOMAIN=mail.yourdomain.com`)
+and it installs Caddy from its official apt repo, writes
+`/etc/caddy/Caddyfile` from [`deploy/Caddyfile`](deploy/Caddyfile) with your
+domain substituted in, and starts it — the Caddyfile itself is just:
 
 ```
 mail.yourdomain.com {
@@ -184,42 +193,18 @@ in `.env` — the app is now genuinely behind a real TLS-terminating proxy, so
 both settings described in "Security notes" below should be on.
 
 To add this to an instance that's already running without it: rerun
-`setup-ec2.sh` with `CADDY_DOMAIN` set (it's safe to rerun), or just do the
-same install/Caddyfile/`WEB_*` steps by hand.
+`install.sh` with a domain given (it's safe to rerun), or just do the same
+install/Caddyfile/`WEB_*` steps by hand.
 
-### Deploying from git (push-to-deploy)
-
-`.github/workflows/deploy.yml` redeploys on every push to `main` by SSHing
-into the instance and running `deploy/deploy.sh`, which does a `git fetch` +
-hard reset to `origin/main`, reinstalls production dependencies, and
-restarts the systemd service. `.env` is untracked so it's left alone.
-
-To wire it up, add these repo secrets (Settings → Secrets and variables →
-Actions):
-
-- `EC2_HOST` — the instance's public IP or DNS name
-- `EC2_USER` — the SSH login user (e.g. `ubuntu`)
-- `EC2_SSH_KEY` — the private key for that user, PEM format
-
-Scope that SSH user's sudo access to just the deploy script, rather than
-granting it blanket sudo — if the `EC2_SSH_KEY` secret ever leaks, this
-limits the damage to "can redeploy this app," not "can run anything as
-root":
-
-```bash
-sudo cp deploy/sudoers-bounce-and-forward /etc/sudoers.d/bounce-and-forward
-sudo chown root:root /etc/sudoers.d/bounce-and-forward
-sudo chmod 0440 /etc/sudoers.d/bounce-and-forward
-sudo visudo -c
-```
-
-(Edit the username in that file first if your deploy user isn't `deploy`.)
-
-You can also redeploy manually at any time:
+### Redeploying after code changes
 
 ```bash
 ssh you@your-ec2-host 'sudo /opt/bounce-and-forward/deploy/deploy.sh main'
 ```
+
+`deploy/deploy.sh` does a `git fetch` + hard reset to `origin/main`,
+reinstalls production dependencies, and restarts the systemd service.
+`.env` is untracked so it's left alone.
 
 ## Configuration reference
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Redeploy script — runs ON the EC2 instance (invoked manually over SSH, or
-# by the GitHub Actions workflow in .github/workflows/deploy.yml).
-# Pulls the latest commit, reinstalls production deps, restarts the service.
+# Redeploy script — runs ON the server, invoked manually over SSH (see
+# README's "Redeploying after code changes"). Pulls the latest commit,
+# reinstalls production deps, restarts the service.
 
 set -euo pipefail
 

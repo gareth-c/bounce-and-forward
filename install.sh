@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
-# One-time provisioning script for a fresh Ubuntu EC2 instance.
-# Run as: sudo REPO_URL=https://github.com/you/bounce-and-forward.git bash deploy/setup-ec2.sh
+# One-time provisioning script for a fresh Ubuntu server (EC2 or otherwise).
+# Prompts interactively for anything not already given via env var — run it
+# bare and it'll ask; pre-set the env vars (e.g. in CI) and it runs
+# unattended with no prompts at all. Either way it needs root:
+#
+#   sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/you/bounce-and-forward/main/install.sh)"
+#
+# (That "bash -c "$(curl ...)"" form — not "curl | bash" — matters: it's
+# what lets the interactive prompts below actually reach your terminal
+# instead of trying to read the piped script bytes as input.)
 #
 # What it does:
 #   - installs Node.js 22.x (via NodeSource)
@@ -9,17 +17,22 @@
 #   - installs production dependencies
 #   - installs the systemd unit (grants CAP_NET_BIND_SERVICE so the service
 #     user can bind port 25 without running as root)
-#   - if CADDY_DOMAIN is set: installs Caddy and configures it as a
+#   - if given a domain: installs Caddy and configures it as a
 #     TLS-terminating reverse proxy in front of the web UI, with automatic
 #     Let's Encrypt issuance/renewal (see README's "TLS for the web UI"
 #     section). Requires that domain's DNS to already point at this
 #     instance's public IP before Caddy can obtain a certificate for it.
-#     Omit CADDY_DOMAIN to skip this and leave the web UI on plain HTTP.
+#     Leave it blank to skip this and stay on plain HTTP.
 #
 # It does NOT start the bounce-and-forward service — you still need to
-# create and fill in .env (copy from .env.example, set ALLOWED_RECIPIENTS /
-# WEB_USERNAME / WEB_PASSWORD_HASH / SESSION_SECRET) before running:
+# fill in .env (SMTP_PORT, ALLOWED_RECIPIENTS, WEB_USERNAME,
+# WEB_PASSWORD_HASH, SESSION_SECRET) before running:
 #   sudo systemctl enable --now bounce-and-forward
+#
+# Env vars (all optional — you're prompted for anything left unset, when
+# running interactively): REPO_URL, CADDY_DOMAIN, NONINTERACTIVE=1 to force
+# non-interactive mode even on a real terminal (fails fast on missing
+# required values instead of prompting).
 
 set -euo pipefail
 
@@ -28,11 +41,53 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
+# Only prompt when there's an actual terminal to prompt on — never hang a
+# CI run or a "curl | bash" (as opposed to "bash -c \"\$(curl ...)\"")
+# invocation waiting on input that will never arrive. Reads come from
+# /dev/tty rather than stdin so this also works even when stdin itself is
+# occupied by a piped script.
+INTERACTIVE=true
+if [ -n "${NONINTERACTIVE:-}" ] || [ ! -e /dev/tty ] || ! { exec 3</dev/tty; } 2>/dev/null; then
+  INTERACTIVE=false
+fi
+
+# ask PROMPT VARNAME — sets VARNAME from its existing env value if already
+# set, otherwise prompts for it (when interactive), otherwise leaves it
+# unset for the caller to handle.
+ask() {
+  local __prompt="$1" __var="$2" __reply
+  if [ -n "${!__var:-}" ]; then
+    return
+  fi
+  if [ "$INTERACTIVE" != true ]; then
+    return
+  fi
+  read -r -p "$__prompt" __reply <&3
+  printf -v "$__var" '%s' "$__reply"
+}
+
+echo "==> Bounce & Forward — installer"
+echo
+
+ask "Git repo URL to deploy (e.g. https://github.com/you/bounce-and-forward.git): " REPO_URL
 REPO_URL="${REPO_URL:-}"
 if [ -z "$REPO_URL" ]; then
-  echo "Set REPO_URL to your git repo, e.g.:" >&2
-  echo "  sudo REPO_URL=https://github.com/you/bounce-and-forward.git bash deploy/setup-ec2.sh" >&2
+  echo "REPO_URL is required. Either run this on a real terminal so it can ask, or set it:" >&2
+  echo "  sudo REPO_URL=https://github.com/you/bounce-and-forward.git bash install.sh" >&2
   exit 1
+fi
+
+ask "Domain for TLS via Caddy, e.g. mail.yourdomain.com (leave blank to skip): " CADDY_DOMAIN
+CADDY_DOMAIN="${CADDY_DOMAIN:-}"
+
+if [ "$INTERACTIVE" = true ]; then
+  echo
+  echo "About to set up Bounce & Forward on this host:"
+  echo "  Repo:   $REPO_URL"
+  echo "  Domain: ${CADDY_DOMAIN:-(none — plain HTTP on WEB_PORT)}"
+  echo "This installs Node.js${CADDY_DOMAIN:+, Caddy,} and a systemd service, as root."
+  read -r -p "Press ENTER to continue, or Ctrl+C to abort... " _ <&3
+  echo
 fi
 
 INSTALL_DIR="/opt/bounce-and-forward"
@@ -72,7 +127,6 @@ echo "==> Installing systemd unit"
 cp "$INSTALL_DIR/deploy/bounce-and-forward.service" /etc/systemd/system/bounce-and-forward.service
 systemctl daemon-reload
 
-CADDY_DOMAIN="${CADDY_DOMAIN:-}"
 if [ -n "$CADDY_DOMAIN" ]; then
   echo "==> Installing Caddy (TLS reverse proxy for the web UI)"
   if ! command -v caddy >/dev/null 2>&1; then
@@ -109,7 +163,7 @@ if [ -n "$CADDY_DOMAIN" ]; then
      Since Caddy is fronting the web UI, also set:
        WEB_SECURE_COOKIES=true
        WEB_TRUST_PROXY=true
-  2. Open ports 25, 80, and 443 in the EC2 security group (80+443 for
+  2. Open ports 25, 80, and 443 in your firewall/security group (80+443 for
      Caddy/Let's Encrypt; 25 for inbound mail). WEB_PORT (8080) does not
      need to be open at all now — the app listens on 127.0.0.1 only and is
      reached solely through Caddy at https://$CADDY_DOMAIN.
@@ -117,7 +171,7 @@ EOF
 else
   cat <<EOF
   2. Open port 25 (and your chosen WEB_PORT, restricted to your own IP) in
-     the EC2 security group. No CADDY_DOMAIN was given, so the web UI is
+     your firewall/security group. No domain was given, so the web UI is
      plain HTTP — see the README's "TLS for the web UI" section if you want
      that added later.
 EOF
