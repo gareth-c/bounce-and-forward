@@ -1,0 +1,53 @@
+<%- include('layout-head', { title: 'Captured mail — Bounce & Forward' }) %>
+<body>
+<header>
+  <a href="/">Bounce &amp; Forward</a>
+  <nav>
+    <a href="/recipients" style="margin-right: 16px;">Accepted domains</a>
+    <form class="inline" method="post" action="/logout">
+      <button type="submit">Log out</button>
+    </form>
+  </nav>
+</header>
+<main>
+  <form class="searchbar" method="get" action="/">
+    <input type="text" name="q" placeholder="Search from / to / subject" value="<%= search %>" />
+    <button type="submit">Search</button>
+  </form>
+
+  <% if (messages.length === 0) { %>
+    <p class="muted">No captured messages yet.</p>
+  <% } else { %>
+    <table>
+      <thead>
+        <tr>
+          <th>Received</th>
+          <th>From</th>
+          <th>To</th>
+          <th>Subject</th>
+          <th>Size</th>
+          <th>Result</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% messages.forEach((m) => { %>
+          <tr>
+            <td><a class="rowlink" href="/messages/<%= m.id %>"><%= new Date(m.received_at).toLocaleString() %></a></td>
+            <td><%= m.mail_from || '(none)' %></td>
+            <td><%= m.rcptTo.join(', ') %></td>
+            <td><%= m.subject || '(no subject)' %></td>
+            <td><%= m.size.toLocaleString() %> B</td>
+            <td><span class="pill"><%= m.bounce_code %> bounced</span></td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+    <div class="pagination">
+      <% if (page > 1) { %><a href="/?page=<%= page - 1 %>&q=<%= encodeURIComponent(search) %>">&larr; Prev</a><% } %>
+      <span class="muted">Page <%= page %> of <%= totalPages %></span>
+      <% if (page < totalPages) { %><a href="/?page=<%= page + 1 %>&q=<%= encodeURIComponent(search) %>">Next &rarr;</a><% } %>
+    </div>
+  <% } %>
+</main>
+</body>
+</html>

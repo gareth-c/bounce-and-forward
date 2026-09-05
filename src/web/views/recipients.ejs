@@ -1,0 +1,51 @@
+<%- include('layout-head', { title: 'Accepted domains — Bounce & Forward' }) %>
+<body>
+<header>
+  <a href="/">Bounce &amp; Forward</a>
+  <nav>
+    <a href="/recipients" style="margin-right: 16px;">Accepted domains</a>
+    <form class="inline" method="post" action="/logout">
+      <button type="submit">Log out</button>
+    </form>
+  </nav>
+</header>
+<main>
+  <p><a href="/">&larr; Back to list</a></p>
+
+  <div class="card" style="margin-bottom: 16px;">
+    <strong>Add address or domain</strong>
+    <p class="muted">Full address (alice@example.com) accepts just that mailbox. A bare domain
+      (example.com) accepts every address at that domain. Anything else is rejected immediately at
+      RCPT TO and never stored.</p>
+    <% if (error) { %><p class="error"><%= error %></p><% } %>
+    <form method="post" action="/recipients" style="display:flex; gap:8px;">
+      <input type="text" name="pattern" placeholder="alice@example.com or example.com" style="flex:1;" required />
+      <button type="submit">Add</button>
+    </form>
+  </div>
+
+  <% if (recipients.length === 0) { %>
+    <p class="muted">No accepted addresses/domains configured — every message will be rejected at RCPT TO.</p>
+  <% } else { %>
+    <table>
+      <thead>
+        <tr><th>Pattern</th><th>Added</th><th></th></tr>
+      </thead>
+      <tbody>
+        <% recipients.forEach((r) => { %>
+          <tr>
+            <td><%= r.pattern %></td>
+            <td class="muted"><%= new Date(r.created_at).toLocaleString() %></td>
+            <td>
+              <form class="inline" method="post" action="/recipients/<%= r.id %>/delete" onsubmit="return confirm('Remove ' + <%- JSON.stringify(r.pattern) %> + '? Mail to it will start bouncing immediately without being stored.');">
+                <button type="submit">Remove</button>
+              </form>
+            </td>
+          </tr>
+        <% }) %>
+      </tbody>
+    </table>
+  <% } %>
+</main>
+</body>
+</html>

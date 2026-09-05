@@ -1,0 +1,23 @@
+<%- include('layout-head', { title: 'Sign in — Bounce & Forward' }) %>
+<body>
+<main style="max-width: 360px; margin-top: 10vh;">
+  <div class="card">
+    <h2 style="margin-top:0;">Bounce &amp; Forward</h2>
+    <% if (error) { %>
+      <p class="error"><%= error %></p>
+    <% } %>
+    <form method="post" action="/login">
+      <div style="margin-bottom: 12px;">
+        <label for="username" style="display:block; margin-bottom:4px;">Username</label>
+        <input id="username" name="username" autocomplete="username" style="width:100%; box-sizing: border-box;" required />
+      </div>
+      <div style="margin-bottom: 16px;">
+        <label for="password" style="display:block; margin-bottom:4px;">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" style="width:100%; box-sizing: border-box;" required />
+      </div>
+      <button type="submit" style="width:100%;">Sign in</button>
+    </form>
+  </div>
+</main>
+</body>
+</html>

@@ -1,0 +1,55 @@
+<%- include('layout-head', { title: (parsed.subject || '(no subject)') + ' — Bounce & Forward' }) %>
+<body>
+<header>
+  <a href="/">Bounce &amp; Forward</a>
+  <nav>
+    <a href="/recipients" style="margin-right: 16px;">Accepted domains</a>
+    <form class="inline" method="post" action="/logout">
+      <button type="submit">Log out</button>
+    </form>
+  </nav>
+</header>
+<main>
+  <p><a href="/">&larr; Back to list</a></p>
+
+  <div class="card" style="margin-bottom: 16px;">
+    <table style="box-shadow: none;">
+      <tr><th style="width:140px;">Subject</th><td><%= parsed.subject || '(no subject)' %></td></tr>
+      <tr><th>From</th><td><%= (parsed.from && parsed.from.text) || message.mail_from || '(none)' %></td></tr>
+      <tr><th>To</th><td><%= (parsed.to && parsed.to.text) || message.rcptTo.join(', ') %></td></tr>
+      <% if (parsed.cc) { %><tr><th>Cc</th><td><%= parsed.cc.text %></td></tr><% } %>
+      <tr><th>Date</th><td><%= parsed.date ? parsed.date.toString() : '(unknown)' %></td></tr>
+      <tr><th>Received</th><td><%= new Date(message.received_at).toLocaleString() %> from <%= message.remote_address %></td></tr>
+      <tr><th>Envelope MAIL FROM</th><td><%= message.mail_from || '(none)' %></td></tr>
+      <tr><th>Envelope RCPT TO</th><td><%= message.rcptTo.join(', ') %></td></tr>
+      <tr><th>Bounced with</th><td><span class="pill"><%= message.bounce_code %></span> <%= message.bounce_message %></td></tr>
+      <tr><th>Raw message</th><td><a href="/messages/<%= message.id %>/raw">Download .eml</a> (<%= message.size.toLocaleString() %> bytes)</td></tr>
+    </table>
+  </div>
+
+  <% if (parsed.attachments && parsed.attachments.length > 0) { %>
+    <div class="card attachments" style="margin-bottom: 16px;">
+      <strong>Attachments</strong><br/>
+      <% parsed.attachments.forEach((att, i) => { %>
+        <a href="/messages/<%= message.id %>/attachments/<%= i %>"><%= att.filename || ('attachment-' + i) %> (<%= att.size.toLocaleString() %> B)</a>
+      <% }) %>
+    </div>
+  <% } %>
+
+  <% if (parsed.html) { %>
+    <div class="card" style="margin-bottom: 16px;">
+      <strong>HTML body</strong>
+      <p class="muted">Rendered in a sandboxed frame with scripts disabled.</p>
+      <iframe sandbox="" style="width:100%; min-height: 400px; border: 1px solid #eaecef; border-radius: 4px; background: #fff;" srcdoc="<%= parsed.html.replace(/"/g, '&quot;') %>"></iframe>
+    </div>
+  <% } %>
+
+  <% if (parsed.text) { %>
+    <div class="card">
+      <strong>Text body</strong>
+      <pre><%= parsed.text %></pre>
+    </div>
+  <% } %>
+</main>
+</body>
+</html>
