@@ -86,17 +86,23 @@ don't expose raw port 25 to the internet.
 4. Optional but recommended: request a PTR (reverse DNS) record for your
    Elastic IP via an AWS Support case ("EC2 reverse DNS request"), and point
    an MX record for your domain(s) at the instance.
-5. SSH in and run the provisioning script, pointing it at your git repo:
+5. SSH in, clone the repo, read `deploy/setup-ec2.sh` (it's short — know what
+   you're about to run as root), then run it:
 
    ```bash
+   git clone https://github.com/you/bounce-and-forward.git /tmp/baf-setup
+   less /tmp/baf-setup/deploy/setup-ec2.sh
    sudo REPO_URL=https://github.com/you/bounce-and-forward.git \
-     bash -c "$(curl -fsSL https://raw.githubusercontent.com/you/bounce-and-forward/main/deploy/setup-ec2.sh)"
+     bash /tmp/baf-setup/deploy/setup-ec2.sh
    ```
 
-   (Or `git clone` the repo first and run `deploy/setup-ec2.sh` locally on
-   the box.) This installs Node.js, creates a `bounceforward` service user,
-   clones the repo to `/opt/bounce-and-forward`, installs dependencies, and
-   installs the systemd unit — but does **not** start the service yet.
+   This installs Node.js, creates a `bounceforward` service user, clones the
+   repo to `/opt/bounce-and-forward`, installs dependencies, and installs the
+   systemd unit — but does **not** start the service yet. (`setup-ec2.sh`
+   itself pipes NodeSource's official install script through `bash` to add
+   the Node.js apt repository — the standard way to install it, but still
+   worth knowing it's root-executing a remote script; review
+   https://github.com/nodesource/distributions if you want to avoid that.)
 
 6. Fill in `/opt/bounce-and-forward/.env` (set `SMTP_PORT=25`,
    `ALLOWED_RECIPIENTS`, `WEB_USERNAME`, `SESSION_SECRET`, and
@@ -128,14 +134,24 @@ Actions):
 - `EC2_USER` — the SSH login user (e.g. `ubuntu`)
 - `EC2_SSH_KEY` — the private key for that user, PEM format
 
-That SSH user needs passwordless `sudo` for `deploy/deploy.sh` specifically,
-or just run the workflow as a user with general sudo (e.g. `ubuntu` on
-standard AMIs already has NOPASSWD sudo).
+Scope that SSH user's sudo access to just the deploy script, rather than
+granting it blanket sudo — if the `EC2_SSH_KEY` secret ever leaks, this
+limits the damage to "can redeploy this app," not "can run anything as
+root":
+
+```bash
+sudo cp deploy/sudoers-bounce-and-forward /etc/sudoers.d/bounce-and-forward
+sudo chown root:root /etc/sudoers.d/bounce-and-forward
+sudo chmod 0440 /etc/sudoers.d/bounce-and-forward
+sudo visudo -c
+```
+
+(Edit the username in that file first if your deploy user isn't `deploy`.)
 
 You can also redeploy manually at any time:
 
 ```bash
-ssh you@your-ec2-host 'sudo bash /opt/bounce-and-forward/deploy/deploy.sh main'
+ssh you@your-ec2-host 'sudo /opt/bounce-and-forward/deploy/deploy.sh main'
 ```
 
 ## Configuration reference
@@ -146,11 +162,29 @@ See [.env.example](.env.example) — every variable is documented inline.
 
 - The web UI is single-user (one username/password from `.env`, bcrypt
   hashed). Put it behind a TLS-terminating reverse proxy (Caddy/nginx) if
-  exposing it beyond a VPN, and set `WEB_SECURE_COOKIES=true` once it's
-  HTTPS-only.
+  exposing it beyond a VPN, and set `WEB_SECURE_COOKIES=true` and
+  `WEB_TRUST_PROXY=true` once it's actually behind that proxy — leave both
+  false if Node is directly internet/VPN-facing, since trusting
+  `X-Forwarded-*` headers with no real proxy in front lets a client spoof
+  them.
+- `/login` is rate-limited (10 attempts / 15 min per IP) to slow down
+  password guessing; there's still no account lockout/alerting, so a weak
+  password is still a weak password.
+- A Content-Security-Policy is enabled (script-src limited to same-origin,
+  no plugins/objects, no framing) as defense-in-depth against XSS, on top of
+  EJS's default output-escaping.
 - HTML email bodies are rendered in a sandboxed `<iframe>` (`sandbox=""`,
   scripts disabled) so a captured message can't execute JavaScript in the
   admin's browser.
 - The SMTP side never performs `AUTH` and accepts any `MAIL FROM` — it's an
   inbound-only capture point, not a relay. It will not forward or relay mail
-  anywhere.
+  anywhere. `MAIL FROM` is trivially spoofable by design in SMTP, so treat
+  the "From"/envelope-sender shown in the UI as unverified.
+- There's no cap on total captured storage — a flood of mail to an accepted
+  address/domain will keep writing to disk until it's full. Monitor disk
+  usage, and prune `data/messages/` + the `messages` table periodically if
+  you expect high volume.
+- Sessions use `express-session`'s default in-memory store — fine for the
+  single-admin-user case this is built for, but sessions won't survive a
+  process restart (re-login required) and it isn't suitable if you ever run
+  more than one instance.

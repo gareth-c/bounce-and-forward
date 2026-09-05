@@ -32,6 +32,7 @@ const config = {
     passwordHash: process.env.WEB_PASSWORD_HASH || '',
     sessionSecret: process.env.SESSION_SECRET || '',
     secureCookies: /^true$/i.test(process.env.WEB_SECURE_COOKIES || 'false'),
+    trustProxy: /^true$/i.test(process.env.WEB_TRUST_PROXY || 'false'),
   },
 };
 

@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const express = require('express');
 const session = require('express-session');
 const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const bcrypt = require('bcryptjs');
 const { simpleParser } = require('mailparser');
 const { config } = require('../config');
@@ -24,10 +25,37 @@ function createApp() {
   const app = express();
   app.set('view engine', 'ejs');
   app.set('views', path.join(__dirname, 'views'));
-  app.set('trust proxy', 1);
+  // Only trust X-Forwarded-* headers when actually deployed behind a reverse
+  // proxy — otherwise a client could spoof them directly (e.g. claim
+  // X-Forwarded-Proto: https to fool secure-cookie logic over plain HTTP).
+  if (config.web.trustProxy) {
+    app.set('trust proxy', 1);
+  }
 
-  app.use(helmet({ contentSecurityPolicy: false }));
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          imgSrc: ["'self'", 'data:'],
+          objectSrc: ["'none'"],
+          baseUri: ["'none'"],
+          frameAncestors: ["'none'"],
+        },
+      },
+    })
+  );
   app.use(express.urlencoded({ extended: false }));
+
+  const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skipSuccessfulRequests: true,
+  });
   app.use(
     session({
       name: 'baf.sid',
@@ -52,7 +80,7 @@ function createApp() {
     res.render('login', { error: null });
   });
 
-  app.post('/login', (req, res) => {
+  app.post('/login', loginLimiter, (req, res) => {
     const { username, password } = req.body;
     const validUsername = typeof username === 'string' && username === config.web.username;
     const validPassword =
@@ -155,7 +183,14 @@ function createApp() {
       res.status(404).send('Attachment not found.');
       return;
     }
-    res.setHeader('Content-Type', attachment.contentType || 'application/octet-stream');
+    // contentType comes from the captured email's own MIME headers, i.e. is
+    // attacker-controlled; only trust it if it actually looks like a MIME
+    // type, so a malformed value can't reach res.setHeader (which throws on
+    // invalid header characters, e.g. embedded CRLF).
+    const contentType = /^[\w.+-]+\/[\w.+-]+$/.test(attachment.contentType || '')
+      ? attachment.contentType
+      : 'application/octet-stream';
+    res.setHeader('Content-Type', contentType);
     const filename = (attachment.filename || 'attachment').replace(/[\r\n"]/g, '_');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(attachment.content);
