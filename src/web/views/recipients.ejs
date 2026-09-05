@@ -4,7 +4,9 @@
   <a href="/">Bounce &amp; Forward</a>
   <nav>
     <a href="/recipients" style="margin-right: 16px;">Accepted domains</a>
+    <a href="/settings" style="margin-right: 16px;">Settings</a>
     <form class="inline" method="post" action="/logout">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>" />
       <button type="submit">Log out</button>
     </form>
   </nav>
@@ -19,6 +21,7 @@
       RCPT TO and never stored.</p>
     <% if (error) { %><p class="error"><%= error %></p><% } %>
     <form method="post" action="/recipients" style="display:flex; gap:8px;">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>" />
       <input type="text" name="pattern" placeholder="alice@example.com or example.com" style="flex:1;" required />
       <button type="submit">Add</button>
     </form>
@@ -37,7 +40,9 @@
             <td><%= r.pattern %></td>
             <td class="muted"><%= new Date(r.created_at).toLocaleString() %></td>
             <td>
-              <form class="inline" method="post" action="/recipients/<%= r.id %>/delete" onsubmit="return confirm('Remove ' + <%- JSON.stringify(r.pattern) %> + '? Mail to it will start bouncing immediately without being stored.');">
+              <form class="inline" method="post" action="/recipients/<%= r.id %>/delete"
+                data-confirm="Remove <%= r.pattern %>? Mail to it will start bouncing immediately without being stored.">
+                <input type="hidden" name="_csrf" value="<%= csrfToken %>" />
                 <button type="submit">Remove</button>
               </form>
             </td>

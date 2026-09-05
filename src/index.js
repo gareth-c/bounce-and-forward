@@ -1,6 +1,13 @@
 const { config } = require('./config');
 const { createServer: createSmtpServer } = require('./smtp/server');
 const { createApp } = require('./web/app');
+const { enforceRetention } = require('./retention');
+
+// Age-based pruning needs to run even when no new mail arrives to trigger it
+// (enforcement also runs right after every capture — see smtp/server.js).
+enforceRetention();
+const retentionInterval = setInterval(enforceRetention, 60 * 60 * 1000);
+retentionInterval.unref();
 
 const smtpServer = createSmtpServer();
 smtpServer.listen(config.smtp.port, config.smtp.host, () => {

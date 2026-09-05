@@ -34,6 +34,11 @@ const config = {
     secureCookies: /^true$/i.test(process.env.WEB_SECURE_COOKIES || 'false'),
     trustProxy: /^true$/i.test(process.env.WEB_TRUST_PROXY || 'false'),
   },
+
+  storage: {
+    quotaBytes: Number(process.env.STORAGE_QUOTA_GB || 5) * 1024 * 1024 * 1024,
+    retentionDays: Number(process.env.RETENTION_DAYS || 365),
+  },
 };
 
 module.exports = { config };

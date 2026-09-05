@@ -4,7 +4,9 @@
   <a href="/">Bounce &amp; Forward</a>
   <nav>
     <a href="/recipients" style="margin-right: 16px;">Accepted domains</a>
+    <a href="/settings" style="margin-right: 16px;">Settings</a>
     <form class="inline" method="post" action="/logout">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>" />
       <button type="submit">Log out</button>
     </form>
   </nav>

@@ -1,5 +1,6 @@
 const path = require('node:path');
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 const express = require('express');
 const session = require('express-session');
 const helmet = require('helmet');
@@ -9,6 +10,9 @@ const { simpleParser } = require('mailparser');
 const { config } = require('../config');
 const { listMessages, countMessages, getMessage } = require('../db');
 const { listAllowedRecipients, addAllowedRecipient, removeAllowedRecipient } = require('../recipients');
+const { getSettings, updateSettings } = require('../settings');
+const { getStorageStats } = require('../retention');
+const { SqliteSessionStore } = require('./sqliteSessionStore');
 
 const PAGE_SIZE = 25;
 
@@ -48,6 +52,7 @@ function createApp() {
     })
   );
   app.use(express.urlencoded({ extended: false }));
+  app.use(express.static(path.join(__dirname, 'public')));
 
   const loginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -59,6 +64,7 @@ function createApp() {
   app.use(
     session({
       name: 'baf.sid',
+      store: new SqliteSessionStore(),
       secret: config.web.sessionSecret,
       resave: false,
       saveUninitialized: false,
@@ -75,6 +81,29 @@ function createApp() {
     if (req.session.authenticated) return next();
     return res.redirect('/login');
   }
+
+  // Synchronizer-token CSRF check for state-changing admin actions. The
+  // token is minted once at login (below) and stored server-side in the
+  // session; SameSite=Lax on the cookie already blocks the cookie itself
+  // from riding along on a cross-site POST in modern browsers, but this is
+  // a second, independent layer that doesn't depend on that browser
+  // behavior. Login itself is exempt: there's only one fixed admin account,
+  // so forcing a login has no attacker-useful effect the way it would on a
+  // multi-account site.
+  function requireCsrf(req, res, next) {
+    const provided = Buffer.from(String(req.body._csrf || ''));
+    const expected = Buffer.from(String(req.session.csrfToken || ''));
+    if (provided.length !== expected.length || !crypto.timingSafeEqual(provided, expected)) {
+      res.status(403).send('Invalid or missing CSRF token. Go back and try again.');
+      return;
+    }
+    next();
+  }
+
+  app.use((req, res, next) => {
+    res.locals.csrfToken = req.session.csrfToken;
+    next();
+  });
 
   app.get('/login', (req, res) => {
     res.render('login', { error: null });
@@ -97,11 +126,12 @@ function createApp() {
         return;
       }
       req.session.authenticated = true;
+      req.session.csrfToken = crypto.randomBytes(32).toString('hex');
       res.redirect('/');
     });
   });
 
-  app.post('/logout', requireAuth, (req, res) => {
+  app.post('/logout', requireAuth, requireCsrf, (req, res) => {
     req.session.destroy(() => {
       res.redirect('/login');
     });
@@ -124,7 +154,7 @@ function createApp() {
     res.render('recipients', { recipients: listAllowedRecipients(), error: null });
   });
 
-  app.post('/recipients', requireAuth, (req, res) => {
+  app.post('/recipients', requireAuth, requireCsrf, (req, res) => {
     const pattern = addAllowedRecipient(req.body.pattern);
     if (!pattern) {
       res.status(400).render('recipients', {
@@ -136,9 +166,24 @@ function createApp() {
     res.redirect('/recipients');
   });
 
-  app.post('/recipients/:id/delete', requireAuth, (req, res) => {
+  app.post('/recipients/:id/delete', requireAuth, requireCsrf, (req, res) => {
     removeAllowedRecipient(req.params.id);
     res.redirect('/recipients');
+  });
+
+  app.get('/settings', requireAuth, (req, res) => {
+    res.render('settings', { settings: getSettings(), stats: getStorageStats(), error: null });
+  });
+
+  app.post('/settings', requireAuth, requireCsrf, (req, res) => {
+    const quotaBytes = Number(req.body.quotaGb) * 1024 * 1024 * 1024;
+    const retentionDays = Number(req.body.retentionDays);
+    const { error } = updateSettings({ quotaBytes, retentionDays });
+    if (error) {
+      res.status(400).render('settings', { settings: getSettings(), stats: getStorageStats(), error });
+      return;
+    }
+    res.redirect('/settings');
   });
 
   app.get('/messages/:id', requireAuth, async (req, res) => {

@@ -6,6 +6,7 @@ const { simpleParser } = require('mailparser');
 const { config } = require('../config');
 const { insertMessage } = require('../db');
 const { isRecipientAllowed } = require('../recipients');
+const { enforceRetention } = require('../retention');
 
 function makeSmtpError(code, message) {
   const err = new Error(message);
@@ -55,6 +56,11 @@ async function onData(stream, session, callback) {
       bounceCode: config.smtp.bounceCode,
       bounceMessage: config.smtp.bounceMessage,
     });
+
+    // Keep storage bounded right after each capture, rather than only on the
+    // periodic sweep in index.js — a burst of large messages shouldn't be
+    // able to blow well past the quota before that next runs.
+    enforceRetention();
   } catch (err) {
     // Even if parsing/storage fails, still bounce below rather than silently
     // accepting mail we failed to capture.

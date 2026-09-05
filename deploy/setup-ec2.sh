@@ -9,10 +9,16 @@
 #   - installs production dependencies
 #   - installs the systemd unit (grants CAP_NET_BIND_SERVICE so the service
 #     user can bind port 25 without running as root)
+#   - if CADDY_DOMAIN is set: installs Caddy and configures it as a
+#     TLS-terminating reverse proxy in front of the web UI, with automatic
+#     Let's Encrypt issuance/renewal (see README's "TLS for the web UI"
+#     section). Requires that domain's DNS to already point at this
+#     instance's public IP before Caddy can obtain a certificate for it.
+#     Omit CADDY_DOMAIN to skip this and leave the web UI on plain HTTP.
 #
-# It does NOT start the service — you still need to create and fill in .env
-# (copy from .env.example, set ALLOWED_RECIPIENTS / WEB_USERNAME /
-# WEB_PASSWORD_HASH / SESSION_SECRET) before running:
+# It does NOT start the bounce-and-forward service — you still need to
+# create and fill in .env (copy from .env.example, set ALLOWED_RECIPIENTS /
+# WEB_USERNAME / WEB_PASSWORD_HASH / SESSION_SECRET) before running:
 #   sudo systemctl enable --now bounce-and-forward
 
 set -euo pipefail
@@ -66,6 +72,27 @@ echo "==> Installing systemd unit"
 cp "$INSTALL_DIR/deploy/bounce-and-forward.service" /etc/systemd/system/bounce-and-forward.service
 systemctl daemon-reload
 
+CADDY_DOMAIN="${CADDY_DOMAIN:-}"
+if [ -n "$CADDY_DOMAIN" ]; then
+  echo "==> Installing Caddy (TLS reverse proxy for the web UI)"
+  if ! command -v caddy >/dev/null 2>&1; then
+    apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl gnupg
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+      | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+      > /etc/apt/sources.list.d/caddy-stable.list
+    apt-get update
+    apt-get install -y caddy
+  fi
+
+  if [ ! -f /etc/caddy/Caddyfile ] || ! grep -q "$CADDY_DOMAIN" /etc/caddy/Caddyfile; then
+    sed "s/mail.yourdomain.com/$CADDY_DOMAIN/" "$INSTALL_DIR/deploy/Caddyfile" > /etc/caddy/Caddyfile
+    echo "==> Wrote /etc/caddy/Caddyfile for $CADDY_DOMAIN"
+  fi
+  systemctl enable caddy
+  systemctl restart caddy
+fi
+
 cat <<EOF
 
 Setup complete. Before starting the service:
@@ -75,8 +102,28 @@ Setup complete. Before starting the service:
      WEB_PASSWORD_HASH (generate with:
        sudo -u $SERVICE_USER bash -c "cd $INSTALL_DIR && npm run hash-password -- 'your-password'"
      )
+EOF
+
+if [ -n "$CADDY_DOMAIN" ]; then
+  cat <<EOF
+     Since Caddy is fronting the web UI, also set:
+       WEB_SECURE_COOKIES=true
+       WEB_TRUST_PROXY=true
+  2. Open ports 25, 80, and 443 in the EC2 security group (80+443 for
+     Caddy/Let's Encrypt; 25 for inbound mail). WEB_PORT (8080) does not
+     need to be open at all now — the app listens on 127.0.0.1 only and is
+     reached solely through Caddy at https://$CADDY_DOMAIN.
+EOF
+else
+  cat <<EOF
   2. Open port 25 (and your chosen WEB_PORT, restricted to your own IP) in
-     the EC2 security group.
+     the EC2 security group. No CADDY_DOMAIN was given, so the web UI is
+     plain HTTP — see the README's "TLS for the web UI" section if you want
+     that added later.
+EOF
+fi
+
+cat <<EOF
   3. Start it:
        systemctl enable --now bounce-and-forward
        systemctl status bounce-and-forward

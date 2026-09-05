@@ -1,0 +1,51 @@
+<%- include('layout-head', { title: 'Settings — Bounce & Forward' }) %>
+<body>
+<header>
+  <a href="/">Bounce &amp; Forward</a>
+  <nav>
+    <a href="/recipients" style="margin-right: 16px;">Accepted domains</a>
+    <a href="/settings" style="margin-right: 16px;">Settings</a>
+    <form class="inline" method="post" action="/logout">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>" />
+      <button type="submit">Log out</button>
+    </form>
+  </nav>
+</header>
+<main>
+  <p><a href="/">&larr; Back to list</a></p>
+
+  <div class="card" style="margin-bottom: 16px;">
+    <strong>Storage</strong>
+    <p class="muted">
+      <%= stats.messageCount.toLocaleString() %> messages stored,
+      <%= (stats.totalBytes / (1024 * 1024)).toFixed(1) %> MB of
+      <%= (settings.quotaBytes / (1024 * 1024 * 1024)).toFixed(1) %> GB quota.
+    </p>
+  </div>
+
+  <div class="card">
+    <strong>Retention &amp; quota</strong>
+    <p class="muted">
+      Enforced after every captured message, and swept hourly. Oldest messages
+      are deleted first when over quota; messages older than the retention
+      window are deleted regardless of quota.
+    </p>
+    <% if (error) { %><p class="error"><%= error %></p><% } %>
+    <form method="post" action="/settings">
+      <input type="hidden" name="_csrf" value="<%= csrfToken %>" />
+      <div style="margin-bottom: 12px;">
+        <label for="quotaGb" style="display:block; margin-bottom:4px;">Storage quota (GB)</label>
+        <input id="quotaGb" name="quotaGb" type="number" min="0.01" step="0.1"
+          value="<%= (settings.quotaBytes / (1024 * 1024 * 1024)).toFixed(2) %>" required />
+      </div>
+      <div style="margin-bottom: 16px;">
+        <label for="retentionDays" style="display:block; margin-bottom:4px;">Retention (days)</label>
+        <input id="retentionDays" name="retentionDays" type="number" min="0" step="1"
+          value="<%= settings.retentionDays %>" required />
+      </div>
+      <button type="submit">Save</button>
+    </form>
+  </div>
+</main>
+</body>
+</html>

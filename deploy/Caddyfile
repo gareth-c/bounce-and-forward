@@ -1,0 +1,7 @@
+# Replace with your real domain before starting Caddy — it must already
+# resolve (an A/AAAA record) to this instance's public IP, since Let's
+# Encrypt's HTTP-01 challenge validates ownership over that DNS name before
+# issuing a certificate.
+mail.yourdomain.com {
+	reverse_proxy 127.0.0.1:8080
+}

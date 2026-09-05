@@ -34,6 +34,16 @@ const ddlStatements = [
     pattern TEXT NOT NULL UNIQUE,
     created_at TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    quota_bytes INTEGER NOT NULL,
+    retention_days INTEGER NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS sessions (
+    sid TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    expires_at INTEGER NOT NULL
+  )`,
 ];
 
 for (const statement of ddlStatements) {
@@ -99,8 +109,31 @@ function getMessage(id) {
   return row ? deserializeRow(row) : null;
 }
 
+const deleteMessageStmt = db.prepare(`DELETE FROM messages WHERE id = ?`);
+
+function deleteMessage(id) {
+  deleteMessageStmt.run(id);
+}
+
+function listMessagesForPruning() {
+  return db.prepare(`SELECT id, raw_filename, size, received_at FROM messages ORDER BY received_at ASC`).all();
+}
+
+function totalMessageBytes() {
+  return db.prepare(`SELECT COALESCE(SUM(size), 0) as total FROM messages`).get().total;
+}
+
 function deserializeRow(row) {
   return { ...row, rcptTo: JSON.parse(row.rcpt_to) };
 }
 
-module.exports = { db, insertMessage, listMessages, countMessages, getMessage };
+module.exports = {
+  db,
+  insertMessage,
+  listMessages,
+  countMessages,
+  getMessage,
+  deleteMessage,
+  listMessagesForPruning,
+  totalMessageBytes,
+};
