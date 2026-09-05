@@ -15,24 +15,27 @@
 #   - creates a dedicated, non-root service user
 #   - clones the repo to /opt/bounce-and-forward
 #   - installs production dependencies
-#   - installs the systemd unit (grants CAP_NET_BIND_SERVICE so the service
-#     user can bind port 25 without running as root)
 #   - if given a domain: installs Caddy and configures it as a
 #     TLS-terminating reverse proxy in front of the web UI, with automatic
 #     Let's Encrypt issuance/renewal (see README's "TLS for the web UI"
 #     section). Requires that domain's DNS to already point at this
 #     instance's public IP before Caddy can obtain a certificate for it.
 #     Leave it blank to skip this and stay on plain HTTP.
-#
-# It does NOT start the bounce-and-forward service — you still need to
-# fill in .env (SMTP_PORT, ALLOWED_RECIPIENTS, WEB_USERNAME,
-# WEB_PASSWORD_HASH, SESSION_SECRET) before running:
-#   sudo systemctl enable --now bounce-and-forward
+#   - on first run only (skipped if .env already exists, so reruns never
+#     clobber it): creates .env from the answers below, with a freshly
+#     generated SESSION_SECRET and a bcrypt hash of the password (the
+#     plaintext password itself is never written to disk or passed as a
+#     command-line argument anywhere — only piped over stdin into the
+#     hashing step)
+#   - installs the systemd unit (grants CAP_NET_BIND_SERVICE so the service
+#     user can bind port 25 without running as root) and starts it
 #
 # Env vars (all optional — you're prompted for anything left unset, when
-# running interactively): REPO_URL, CADDY_DOMAIN, NONINTERACTIVE=1 to force
-# non-interactive mode even on a real terminal (fails fast on missing
-# required values instead of prompting).
+# running interactively): REPO_URL, CADDY_DOMAIN, SMTP_PORT,
+# ALLOWED_RECIPIENTS, WEB_USERNAME, WEB_PASSWORD (plaintext — hashed before
+# it touches disk) or WEB_PASSWORD_HASH (pre-hashed, used as-is),
+# NONINTERACTIVE=1 to force non-interactive mode even on a real terminal
+# (fails fast on missing required values instead of prompting).
 
 set -euo pipefail
 
@@ -40,6 +43,9 @@ if [ "$(id -u)" -ne 0 ]; then
   echo "Run this with sudo/root (it installs packages and a systemd unit)." >&2
   exit 1
 fi
+
+INSTALL_DIR="/opt/bounce-and-forward"
+SERVICE_USER="bounceforward"
 
 # Only prompt when there's an actual terminal to prompt on — never hang a
 # CI run or a "curl | bash" (as opposed to "bash -c \"\$(curl ...)\"")
@@ -51,25 +57,65 @@ if [ -n "${NONINTERACTIVE:-}" ] || [ ! -e /dev/tty ] || ! { exec 3</dev/tty; } 2
   INTERACTIVE=false
 fi
 
-# ask PROMPT VARNAME — sets VARNAME from its existing env value if already
-# set, otherwise prompts for it (when interactive), otherwise leaves it
-# unset for the caller to handle.
+# ask PROMPT VARNAME [DEFAULT] — sets VARNAME from its existing env value if
+# already set; otherwise prompts for it (showing DEFAULT, used if the reply
+# is empty) when interactive; otherwise falls back to DEFAULT if given, or
+# leaves VARNAME unset for the caller to handle.
 ask() {
-  local __prompt="$1" __var="$2" __reply
+  local __prompt="$1" __var="$2" __default="${3-}" __reply
   if [ -n "${!__var:-}" ]; then
-    return
+    return 0
   fi
   if [ "$INTERACTIVE" != true ]; then
-    return
+    # Always assign, even when __default is "" — leaving __var completely
+    # unset here would trip `set -u` wherever it's read later.
+    printf -v "$__var" '%s' "$__default"
+    return 0
   fi
-  read -r -p "$__prompt" __reply <&3
+  if [ -n "$__default" ]; then
+    read -r -p "$__prompt [$__default]: " __reply <&3
+    __reply="${__reply:-$__default}"
+  else
+    read -r -p "$__prompt: " __reply <&3
+  fi
   printf -v "$__var" '%s' "$__reply"
+  return 0
+}
+
+# Prompts for a password with hidden input and confirmation. Leaves it in
+# WEB_PASSWORD (plaintext, in-memory only — never written to disk; hashed
+# and unset once dependencies are installed, below).
+ask_password() {
+  if [ -n "${WEB_PASSWORD_HASH:-}" ] || [ -n "${WEB_PASSWORD:-}" ]; then
+    return 0
+  fi
+  if [ "$INTERACTIVE" != true ]; then
+    return 0
+  fi
+  local pw1 pw2
+  while true; do
+    read -rs -p "Web UI password for '$WEB_USERNAME': " pw1 <&3
+    echo >&2
+    read -rs -p "Confirm password: " pw2 <&3
+    echo >&2
+    if [ -z "$pw1" ]; then
+      echo "Password cannot be empty." >&2
+      continue
+    fi
+    if [ "$pw1" != "$pw2" ]; then
+      echo "Passwords didn't match — try again." >&2
+      continue
+    fi
+    WEB_PASSWORD="$pw1"
+    break
+  done
+  return 0
 }
 
 echo "==> Bounce & Forward — installer"
 echo
 
-ask "Git repo URL to deploy (e.g. https://github.com/you/bounce-and-forward.git): " REPO_URL
+ask "Git repo URL to deploy (e.g. https://github.com/you/bounce-and-forward.git)" REPO_URL
 REPO_URL="${REPO_URL:-}"
 if [ -z "$REPO_URL" ]; then
   echo "REPO_URL is required. Either run this on a real terminal so it can ask, or set it:" >&2
@@ -77,21 +123,44 @@ if [ -z "$REPO_URL" ]; then
   exit 1
 fi
 
-ask "Domain for TLS via Caddy, e.g. mail.yourdomain.com (leave blank to skip): " CADDY_DOMAIN
+ask "Domain for TLS via Caddy, e.g. mail.yourdomain.com (leave blank to skip)" CADDY_DOMAIN
 CADDY_DOMAIN="${CADDY_DOMAIN:-}"
+
+# .env is only ever created once — a rerun (e.g. to add Caddy later) leaves
+# an existing one untouched, so none of this needs asking again then.
+NEED_ENV_SETUP=true
+if [ -f "$INSTALL_DIR/.env" ]; then
+  NEED_ENV_SETUP=false
+fi
+
+if [ "$NEED_ENV_SETUP" = true ]; then
+  ask "SMTP port to listen on" SMTP_PORT "25"
+  ask "Accepted recipients, comma-separated (blank is fine — manage later at /recipients)" ALLOWED_RECIPIENTS ""
+  ask "Web UI username" WEB_USERNAME "admin"
+  ask_password
+  if [ -z "${WEB_PASSWORD_HASH:-}" ] && [ -z "${WEB_PASSWORD:-}" ]; then
+    echo "WEB_PASSWORD or WEB_PASSWORD_HASH is required to create .env non-interactively." >&2
+    echo "  sudo REPO_URL=... WEB_PASSWORD='...' bash install.sh" >&2
+    exit 1
+  fi
+fi
 
 if [ "$INTERACTIVE" = true ]; then
   echo
   echo "About to set up Bounce & Forward on this host:"
   echo "  Repo:   $REPO_URL"
   echo "  Domain: ${CADDY_DOMAIN:-(none — plain HTTP on WEB_PORT)}"
-  echo "This installs Node.js${CADDY_DOMAIN:+, Caddy,} and a systemd service, as root."
+  if [ "$NEED_ENV_SETUP" = true ]; then
+    echo "  SMTP port:  $SMTP_PORT"
+    echo "  Recipients: ${ALLOWED_RECIPIENTS:-(none yet — add via /recipients)}"
+    echo "  Web login:  $WEB_USERNAME / ********"
+  else
+    echo "  .env already exists — leaving it untouched."
+  fi
+  echo "This installs Node.js${CADDY_DOMAIN:+, Caddy,} and a systemd service, as root, and starts it."
   read -r -p "Press ENTER to continue, or Ctrl+C to abort... " _ <&3
   echo
 fi
-
-INSTALL_DIR="/opt/bounce-and-forward"
-SERVICE_USER="bounceforward"
 
 echo "==> Installing Node.js 22.x"
 if ! command -v node >/dev/null 2>&1 || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 22 ]; then
@@ -116,11 +185,46 @@ chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
 echo "==> Installing production dependencies"
 sudo -u "$SERVICE_USER" bash -c "cd '$INSTALL_DIR' && npm ci --omit=dev"
 
-if [ ! -f "$INSTALL_DIR/.env" ]; then
+if [ "$NEED_ENV_SETUP" = true ]; then
+  echo "==> Writing $INSTALL_DIR/.env"
+
+  if [ -z "${WEB_PASSWORD_HASH:-}" ]; then
+    WEB_PASSWORD_HASH="$(
+      printf '%s' "$WEB_PASSWORD" \
+        | sudo -u "$SERVICE_USER" bash -c "cd '$INSTALL_DIR' && node bin/hash-password.js"
+    )"
+    unset WEB_PASSWORD
+  fi
+  SESSION_SECRET="$(node -e 'console.log(require("crypto").randomBytes(32).toString("hex"))')"
+
   cp "$INSTALL_DIR/.env.example" "$INSTALL_DIR/.env"
+
+  # Uses Node (already installed) rather than sed, so values containing
+  # regex/sed-hostile characters — a bcrypt hash is full of $, ., / — can't
+  # corrupt the file or one another.
+  set_env() {
+    node -e '
+      const fs = require("fs");
+      const [, file, key, value] = process.argv;
+      const re = new RegExp("^" + key + "=.*$", "m");
+      const line = key + "=" + value;
+      const content = fs.readFileSync(file, "utf8");
+      fs.writeFileSync(file, re.test(content) ? content.replace(re, () => line) : content + "\n" + line + "\n");
+    ' "$INSTALL_DIR/.env" "$1" "$2"
+  }
+
+  set_env SMTP_PORT "$SMTP_PORT"
+  set_env ALLOWED_RECIPIENTS "$ALLOWED_RECIPIENTS"
+  set_env WEB_USERNAME "$WEB_USERNAME"
+  set_env WEB_PASSWORD_HASH "$WEB_PASSWORD_HASH"
+  set_env SESSION_SECRET "$SESSION_SECRET"
+  if [ -n "$CADDY_DOMAIN" ]; then
+    set_env WEB_SECURE_COOKIES "true"
+    set_env WEB_TRUST_PROXY "true"
+  fi
+
   chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/.env"
   chmod 600 "$INSTALL_DIR/.env"
-  echo "==> Created $INSTALL_DIR/.env from .env.example — edit it before starting the service."
 fi
 
 echo "==> Installing systemd unit"
@@ -147,41 +251,33 @@ if [ -n "$CADDY_DOMAIN" ]; then
   systemctl restart caddy
 fi
 
+echo "==> Starting bounce-and-forward"
+systemctl enable --now bounce-and-forward
+sleep 1
+systemctl --no-pager status bounce-and-forward || true
+
 cat <<EOF
 
-Setup complete. Before starting the service:
-
-  1. Edit $INSTALL_DIR/.env — set SMTP_PORT=25, ALLOWED_RECIPIENTS,
-     WEB_USERNAME, SESSION_SECRET (openssl rand -hex 32), and
-     WEB_PASSWORD_HASH (generate with:
-       sudo -u $SERVICE_USER bash -c "cd $INSTALL_DIR && npm run hash-password -- 'your-password'"
-     )
+Done. Remaining manual step: open the right ports in your firewall/security
+group — this script doesn't touch that.
 EOF
 
 if [ -n "$CADDY_DOMAIN" ]; then
   cat <<EOF
-     Since Caddy is fronting the web UI, also set:
-       WEB_SECURE_COOKIES=true
-       WEB_TRUST_PROXY=true
-  2. Open ports 25, 80, and 443 in your firewall/security group (80+443 for
-     Caddy/Let's Encrypt; 25 for inbound mail). WEB_PORT (8080) does not
-     need to be open at all now — the app listens on 127.0.0.1 only and is
-     reached solely through Caddy at https://$CADDY_DOMAIN.
+  Open 25 (inbound mail) and 80+443 (Caddy/Let's Encrypt). WEB_PORT (8080)
+  does not need to be open at all — the app listens on 127.0.0.1 only and
+  is reached solely through Caddy at https://$CADDY_DOMAIN.
 EOF
 else
   cat <<EOF
-  2. Open port 25 (and your chosen WEB_PORT, restricted to your own IP) in
-     your firewall/security group. No domain was given, so the web UI is
-     plain HTTP — see the README's "TLS for the web UI" section if you want
-     that added later.
+  Open 25 (inbound mail), and WEB_PORT restricted to your own IP/VPN — not
+  the world, since the web UI is plain HTTP. See the README's "TLS for the
+  web UI" section to add that later.
 EOF
 fi
 
 cat <<EOF
-  3. Start it:
-       systemctl enable --now bounce-and-forward
-       systemctl status bounce-and-forward
-       journalctl -u bounce-and-forward -f
 
-To redeploy after pushing new commits, run deploy/deploy.sh (see README).
+  journalctl -u bounce-and-forward -f   # watch logs
+  sudo /opt/bounce-and-forward/deploy/deploy.sh main   # redeploy later
 EOF

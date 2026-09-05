@@ -114,47 +114,48 @@ don't expose raw port 25 to the internet.
    already resolving by the time Caddy tries to get a certificate for it.
 
 6. SSH in and run `install.sh` as root. It's interactive — run it bare and
-   it asks for anything it needs:
+   it asks for everything it needs, including the web UI's username/password
+   (hidden input, confirmed, then hashed — the plaintext never touches disk
+   or a command-line argument anywhere), and starts the service at the end:
 
    ```bash
    sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/you/bounce-and-forward/main/install.sh)"
    ```
 
-   It'll prompt for your repo URL, then a domain for TLS via Caddy (leave
-   blank to skip that — see "TLS for the web UI" below), show a summary, and
-   wait for you to press Enter before touching the system. Prefer to review
-   it first, or automate it (CI, no prompts)? Same script, no prompting when
-   the values are already given as env vars:
+   It prompts for: your repo URL, a domain for TLS via Caddy (leave blank to
+   skip — see "TLS for the web UI" below), the SMTP port (defaults to 25),
+   accepted recipients (blank is fine — add them later at `/recipients`),
+   and the web UI username/password. Shows a summary (password masked) and
+   waits for Enter before touching the system. Prefer to review it first, or
+   automate it (CI, no prompts)? Same script, no prompting for anything
+   already given as an env var — see the header comment in
+   [`install.sh`](install.sh) for the full list:
 
    ```bash
    git clone https://github.com/you/bounce-and-forward.git /tmp/baf-setup
    less /tmp/baf-setup/install.sh
    sudo REPO_URL=https://github.com/you/bounce-and-forward.git \
      CADDY_DOMAIN=mail.yourdomain.com \
+     ALLOWED_RECIPIENTS=alice@example.com,@example.org \
+     WEB_PASSWORD='a real password, not this' \
      bash /tmp/baf-setup/install.sh
    ```
 
    Either way it installs Node.js, creates a `bounceforward` service user,
-   clones the repo to `/opt/bounce-and-forward`, installs dependencies, and
-   installs the systemd unit — but does **not** start the service yet.
-   (`install.sh` itself pipes NodeSource's official install script through
-   `bash` to add the Node.js apt repository — the standard way to install
-   it, but still worth knowing it's root-executing a remote script; review
-   https://github.com/nodesource/distributions if you want to avoid that. It
-   does the same thing for Caddy's official apt repository if you gave it a
-   domain — review https://caddyserver.com/docs/install if you want to avoid
-   that too.)
+   clones the repo to `/opt/bounce-and-forward`, installs dependencies,
+   writes `.env` from your answers (skipped on a rerun if `.env` already
+   exists, so reruns never clobber it), installs the systemd unit, and
+   starts the service. (`install.sh` itself pipes NodeSource's official
+   install script through `bash` to add the Node.js apt repository — the
+   standard way to install it, but still worth knowing it's root-executing a
+   remote script; review https://github.com/nodesource/distributions if you
+   want to avoid that. It does the same thing for Caddy's official apt
+   repository if you gave it a domain — review
+   https://caddyserver.com/docs/install if you want to avoid that too.)
 
-7. Fill in `/opt/bounce-and-forward/.env` (set `SMTP_PORT=25`,
-   `ALLOWED_RECIPIENTS`, `WEB_USERNAME`, `SESSION_SECRET`, and
-   `WEB_PASSWORD_HASH` — the setup script prints the exact command to
-   generate the hash; if you set `CADDY_DOMAIN`, also set
-   `WEB_SECURE_COOKIES=true` and `WEB_TRUST_PROXY=true` as the script's
-   final output will remind you).
-8. Start it:
+7. Check it came up:
 
    ```bash
-   sudo systemctl enable --now bounce-and-forward
    sudo systemctl status bounce-and-forward
    sudo journalctl -u bounce-and-forward -f
    ```
