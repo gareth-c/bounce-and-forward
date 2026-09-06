@@ -162,7 +162,31 @@ if [ "$INTERACTIVE" = true ]; then
   echo
 fi
 
+# Fresh cloud instances commonly still have cloud-init's own first-boot
+# package setup running (holding the apt/dpkg lock) or left dpkg in an
+# interrupted state once it finishes — both produce confusing apt-get
+# failures if not handled before the first real apt-get call.
+wait_for_apt() {
+  if command -v fuser >/dev/null 2>&1; then
+    local waited=0
+    while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
+      if [ "$waited" -ge 120 ]; then
+        echo "Still waiting on the apt/dpkg lock after 2 minutes — giving up. Check what's holding it (e.g. 'ps aux | grep apt') and retry." >&2
+        exit 1
+      fi
+      echo "    waiting for another apt/dpkg process to finish..."
+      sleep 5
+      waited=$((waited + 5))
+    done
+  fi
+  # Repairs a dpkg left interrupted by cloud-init's own first-boot package
+  # setup — the actual failure mode this is guarding against, independent
+  # of whether the lock-wait above could even run.
+  dpkg --configure -a
+}
+
 echo "==> Installing Node.js 22.x"
+wait_for_apt
 if ! command -v node >/dev/null 2>&1 || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 22 ]; then
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   apt-get install -y nodejs
@@ -234,6 +258,7 @@ systemctl daemon-reload
 if [ -n "$CADDY_DOMAIN" ]; then
   echo "==> Installing Caddy (TLS reverse proxy for the web UI)"
   if ! command -v caddy >/dev/null 2>&1; then
+    wait_for_apt
     apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl gnupg
     curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
       | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
