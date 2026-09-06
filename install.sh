@@ -4,7 +4,7 @@
 # bare and it'll ask; pre-set the env vars (e.g. in CI) and it runs
 # unattended with no prompts at all. Either way it needs root:
 #
-#   sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/you/bounce-and-forward/main/install.sh)"
+#   sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/gareth-c/bounce-and-forward/main/install.sh)"
 #
 # (That "bash -c "$(curl ...)"" form — not "curl | bash" — matters: it's
 # what lets the interactive prompts below actually reach your terminal
@@ -115,11 +115,11 @@ ask_password() {
 echo "==> Bounce & Forward — installer"
 echo
 
-ask "Git repo URL to deploy (e.g. https://github.com/you/bounce-and-forward.git)" REPO_URL
+ask "Git repo URL to deploy" REPO_URL "https://github.com/gareth-c/bounce-and-forward.git"
 REPO_URL="${REPO_URL:-}"
 if [ -z "$REPO_URL" ]; then
   echo "REPO_URL is required. Either run this on a real terminal so it can ask, or set it:" >&2
-  echo "  sudo REPO_URL=https://github.com/you/bounce-and-forward.git bash install.sh" >&2
+  echo "  sudo REPO_URL=https://github.com/gareth-c/bounce-and-forward.git bash install.sh" >&2
   exit 1
 fi
 

@@ -119,27 +119,30 @@ don't expose raw port 25 to the internet.
    or a command-line argument anywhere), and starts the service at the end:
 
    ```bash
-   sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/you/bounce-and-forward/main/install.sh)"
+   sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/gareth-c/bounce-and-forward/main/install.sh)"
    ```
 
-   It prompts for: your repo URL, a domain for TLS via Caddy (leave blank to
-   skip — see "TLS for the web UI" below), the SMTP port (defaults to 25),
-   accepted recipients (blank is fine — add them later at `/recipients`),
-   and the web UI username/password. Shows a summary (password masked) and
-   waits for Enter before touching the system. Prefer to review it first, or
-   automate it (CI, no prompts)? Same script, no prompting for anything
-   already given as an env var — see the header comment in
-   [`install.sh`](install.sh) for the full list:
+   It prompts for: the repo URL to deploy (defaults to this repo — just
+   press Enter unless you're deploying your own fork), a domain for TLS via
+   Caddy (leave blank to skip — see "TLS for the web UI" below), the SMTP
+   port (defaults to 25), accepted recipients (blank is fine — add them
+   later at `/recipients`), and the web UI username/password. Shows a
+   summary (password masked) and waits for Enter before touching the
+   system. Prefer to review it first, or automate it (CI, no prompts)? Same
+   script, no prompting for anything already given as an env var — see the
+   header comment in [`install.sh`](install.sh) for the full list:
 
    ```bash
-   git clone https://github.com/you/bounce-and-forward.git /tmp/baf-setup
+   git clone https://github.com/gareth-c/bounce-and-forward.git /tmp/baf-setup
    less /tmp/baf-setup/install.sh
-   sudo REPO_URL=https://github.com/you/bounce-and-forward.git \
-     CADDY_DOMAIN=mail.yourdomain.com \
+   sudo CADDY_DOMAIN=mail.yourdomain.com \
      ALLOWED_RECIPIENTS=alice@example.com,@example.org \
      WEB_PASSWORD='a real password, not this' \
      bash /tmp/baf-setup/install.sh
    ```
+
+   (Add `REPO_URL=...` to either form if you're deploying your own fork
+   rather than this repo.)
 
    Either way it installs Node.js, creates a `bounceforward` service user,
    clones the repo to `/opt/bounce-and-forward`, installs dependencies,
