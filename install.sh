@@ -229,7 +229,10 @@ fi
 
 echo "==> Fetching repo into $INSTALL_DIR"
 if [ -d "$INSTALL_DIR/.git" ]; then
-  git -C "$INSTALL_DIR" pull --ff-only
+  # Already owned by $SERVICE_USER from a previous run's chown below — pull
+  # as that user too, not root, or git's dubious-ownership check (correctly)
+  # refuses to touch a repo owned by someone else.
+  sudo -u "$SERVICE_USER" git -C "$INSTALL_DIR" pull --ff-only
 else
   git clone "$REPO_URL" "$INSTALL_DIR"
 fi
