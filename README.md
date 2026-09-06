@@ -122,6 +122,12 @@ don't expose raw port 25 to the internet.
    sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/gareth-c/bounce-and-forward/main/install.sh)"
    ```
 
+   (`raw.githubusercontent.com` caches for up to 5 minutes — if you or a
+   fork you're tracking just pushed a change to `install.sh` and a rerun
+   doesn't seem to have it, that's why; `git clone` and run the local copy,
+   as below, to bypass the cache and guarantee you're running what's
+   actually on `main`.)
+
    It prompts for: the repo URL to deploy (defaults to this repo — just
    press Enter unless you're deploying your own fork), a domain for TLS via
    Caddy (leave blank to skip — see "TLS for the web UI" below), the SMTP
