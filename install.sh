@@ -47,6 +47,33 @@ fi
 INSTALL_DIR="/opt/bounce-and-forward"
 SERVICE_USER="bounceforward"
 
+# needrestart's post-install process scan is known to spike memory hard
+# enough to get OOM-killed on small instances (t4g.micro/nano-class) — seen
+# in practice installing Caddy's dependencies. Skip it rather than let a
+# package install fail non-deterministically partway through.
+export NEEDRESTART_SUSPEND=1
+export DEBIAN_FRONTEND=noninteractive
+
+# Second line of defense for the same class of problem: add a swapfile on
+# a low-memory instance with none yet, so a genuine memory spike degrades
+# to "slow" instead of a process getting killed outright.
+ensure_swap() {
+  if ! command -v swapon >/dev/null 2>&1 || [ -n "$(swapon --show 2>/dev/null)" ]; then
+    return 0
+  fi
+  local mem_kb
+  mem_kb="$(awk '/MemTotal/ { print $2 }' /proc/meminfo 2>/dev/null || echo 0)"
+  if [ "$mem_kb" -ge 1572864 ] || [ -f /swapfile ]; then
+    return 0
+  fi
+  echo "==> Low-memory instance with no swap detected — adding a 1GB swapfile"
+  fallocate -l 1G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=1024 status=none
+  chmod 600 /swapfile
+  mkswap /swapfile >/dev/null
+  swapon /swapfile
+  grep -q '^/swapfile ' /etc/fstab 2>/dev/null || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+}
+
 # Only prompt when there's an actual terminal to prompt on — never hang a
 # CI run or a "curl | bash" (as opposed to "bash -c \"\$(curl ...)\"")
 # invocation waiting on input that will never arrive. Reads come from
@@ -184,6 +211,8 @@ wait_for_apt() {
   # of whether the lock-wait above could even run.
   dpkg --configure -a
 }
+
+ensure_swap
 
 echo "==> Installing Node.js 22.x"
 wait_for_apt
