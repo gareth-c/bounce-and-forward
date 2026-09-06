@@ -21,6 +21,12 @@ sudo -u "$SERVICE_USER" bash -c "cd '$INSTALL_DIR' && git fetch origin '$BRANCH'
 echo "==> Installing production dependencies"
 sudo -u "$SERVICE_USER" bash -c "cd '$INSTALL_DIR' && npm ci --omit=dev"
 
+# The systemd unit's ReadWritePaths=.../data requires this to exist before
+# it'll even start the service (see install.sh for the full explanation) —
+# cheap insurance here too in case it's ever missing at redeploy time.
+mkdir -p "$INSTALL_DIR/data"
+chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/data"
+
 echo "==> Restarting $SERVICE_NAME"
 systemctl restart "$SERVICE_NAME"
 systemctl --no-pager status "$SERVICE_NAME"

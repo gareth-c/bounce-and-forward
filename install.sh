@@ -238,6 +238,14 @@ else
 fi
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
 
+# The systemd unit's ReadWritePaths=.../data (part of its ProtectSystem=strict
+# sandboxing) requires this directory to already exist — systemd sets up that
+# mount namespace before exec'ing node, so the app's own `fs.mkdirSync` in
+# src/db.js never gets a chance to create it first. Without this, the service
+# fails immediately with "226/NAMESPACE".
+mkdir -p "$INSTALL_DIR/data"
+chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/data"
+
 echo "==> Installing production dependencies"
 sudo -u "$SERVICE_USER" bash -c "cd '$INSTALL_DIR' && npm ci --omit=dev"
 
